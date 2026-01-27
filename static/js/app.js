@@ -25,6 +25,21 @@ const app = createApp({
     const tableIndexes = ref([]);
     const structureLoading = ref(false);
 
+    const STRUCTURE_COL_ORDER = ['field', 'type', 'null', 'default', 'key', 'comment'];
+    const structureColumns = computed(() => {
+      if (!tableStructure.value.length) return [];
+      const allKeys = Object.keys(tableStructure.value[0]);
+      const ordered = [];
+      for (const pref of STRUCTURE_COL_ORDER) {
+        const found = allKeys.find(k => k.toLowerCase() === pref);
+        if (found) ordered.push(found);
+      }
+      for (const k of allKeys) {
+        if (!ordered.includes(k)) ordered.push(k);
+      }
+      return ordered;
+    });
+
     // Query editor
     const queryText = ref('');
     const queryResult = ref(null);
@@ -34,9 +49,24 @@ const app = createApp({
 
     // Chat
     const chatOpen = ref(true);
-    const chatMessages = ref([]);  // [{role, content, query?, is_write?}]
     const chatInput = ref('');
     const chatLoading = ref(false);
+
+    // Conversations
+    const conversations = ref([]);
+    const activeConversationId = ref(null);
+    let nextConversationId = 1;
+
+    const activeConversation = computed(() =>
+      conversations.value.find(c => c.id === activeConversationId.value) || null
+    );
+    const chatMessages = computed(() =>
+      activeConversation.value ? activeConversation.value.messages : []
+    );
+    const chatQuote = computed({
+      get() { return activeConversation.value ? activeConversation.value.quote : null; },
+      set(val) { if (activeConversation.value) activeConversation.value.quote = val; },
+    });
 
     // Autocomplete
     const autocompleteItems = ref([]);
@@ -57,6 +87,10 @@ const app = createApp({
 
     // General error
     const globalError = ref('');
+
+    // Console
+    const consoleEntries = ref([]);
+    const consoleBody = ref(null);
 
     // Theme
     const isDark = ref(true);
@@ -82,6 +116,81 @@ const app = createApp({
     function showError(msg) {
       globalError.value = msg;
       setTimeout(() => { globalError.value = ''; }, 5000);
+    }
+
+    // ---- Console helpers ----
+    function logToConsole(text, type = 'info') {
+      const now = new Date();
+      const time = now.toLocaleTimeString('en-GB', { hour12: false });
+      consoleEntries.value.push({ time, text, type });
+      nextTick(() => {
+        if (consoleBody.value) {
+          consoleBody.value.scrollTop = consoleBody.value.scrollHeight;
+        }
+      });
+    }
+
+    function clearConsole() {
+      consoleEntries.value = [];
+    }
+
+    // ---- Conversation management ----
+    function generateConversationTitle(text) {
+      const trimmed = text.trim();
+      return trimmed.length > 30 ? trimmed.slice(0, 30) + '…' : trimmed;
+    }
+
+    function createConversation() {
+      const conv = reactive({
+        id: nextConversationId++,
+        title: 'New Chat',
+        messages: [],
+        quote: null,
+        createdAt: new Date(),
+      });
+      conversations.value.push(conv);
+      activeConversationId.value = conv.id;
+      chatInput.value = '';
+      return conv;
+    }
+
+    function switchConversation(id) {
+      activeConversationId.value = id;
+      chatInput.value = '';
+    }
+
+    function deleteConversation(id) {
+      const idx = conversations.value.findIndex(c => c.id === id);
+      if (idx === -1) return;
+      conversations.value.splice(idx, 1);
+      if (activeConversationId.value === id) {
+        if (conversations.value.length > 0) {
+          // Switch to nearest conversation
+          const newIdx = Math.min(idx, conversations.value.length - 1);
+          activeConversationId.value = conversations.value[newIdx].id;
+        } else {
+          // Last one deleted — auto-create fresh
+          createConversation();
+        }
+      }
+    }
+
+    function quoteToChat() {
+      const sel = window.getSelection();
+      const text = sel ? sel.toString().trim() : '';
+      if (!text) return;
+      const preview = text.length > 60 ? text.slice(0, 60) + '…' : text;
+      if (!activeConversation.value) createConversation();
+      activeConversation.value.quote = { text, preview };
+      chatOpen.value = true;
+      nextTick(() => {
+        const el = document.querySelector('.chat-input-wrap textarea');
+        if (el) el.focus();
+      });
+    }
+
+    function dismissQuote() {
+      if (activeConversation.value) activeConversation.value.quote = null;
     }
 
     // ---- Connection CRUD ----
@@ -253,32 +362,61 @@ const app = createApp({
       if (tab === 'structure' && activeTable.value) loadStructure();
     }
 
+    function editInQueryTab(query) {
+      queryText.value = query;
+      queryResult.value = null;
+      queryError.value = '';
+      needsConfirmation.value = false;
+      activeTab.value = 'query';
+    }
+
     // ---- Query execution ----
     async function runQuery() {
       if (!activeConn.value || !queryText.value.trim()) return;
+      const sql = queryText.value.trim();
       queryLoading.value = true;
       queryError.value = '';
       queryResult.value = null;
       needsConfirmation.value = false;
+      logToConsole(`Executing: ${sql}`, 'info');
       try {
-        const r = await API.executeQuery(activeConn.value.id, activeDb.value, queryText.value.trim());
+        const r = await API.executeQuery(activeConn.value.id, activeDb.value, sql);
         if (r.needs_confirmation) {
           needsConfirmation.value = true;
           queryError.value = r.message;
+          logToConsole('Write operation detected — awaiting confirmation', 'warn');
         } else {
           queryResult.value = r;
+          if (r.affected_rows !== undefined) {
+            logToConsole(`OK — ${r.affected_rows} affected rows`, 'success');
+          } else if (r.rows) {
+            logToConsole(`OK — ${r.rowcount} rows returned`, 'success');
+          }
         }
-      } catch (e) { queryError.value = e.message; }
+      } catch (e) {
+        queryError.value = e.message;
+        logToConsole(`Error: ${e.message}`, 'error');
+      }
       queryLoading.value = false;
     }
 
     async function confirmQuery() {
+      const sql = queryText.value.trim();
       queryLoading.value = true;
       queryError.value = '';
       needsConfirmation.value = false;
+      logToConsole(`Confirmed write: ${sql}`, 'info');
       try {
-        queryResult.value = await API.executeQuery(activeConn.value.id, activeDb.value, queryText.value.trim(), true);
-      } catch (e) { queryError.value = e.message; }
+        queryResult.value = await API.executeQuery(activeConn.value.id, activeDb.value, sql, true);
+        if (queryResult.value.affected_rows !== undefined) {
+          logToConsole(`OK — ${queryResult.value.affected_rows} affected rows`, 'success');
+        } else if (queryResult.value.rows) {
+          logToConsole(`OK — ${queryResult.value.rowcount} rows returned`, 'success');
+        }
+      } catch (e) {
+        queryError.value = e.message;
+        logToConsole(`Error: ${e.message}`, 'error');
+      }
       queryLoading.value = false;
     }
 
@@ -286,34 +424,98 @@ const app = createApp({
     async function sendChat() {
       const text = chatInput.value.trim();
       if (!text || !activeConn.value || !activeDb.value) return;
-      chatMessages.value.push({ role: 'user', content: text });
+
+      // Auto-create conversation if none
+      if (!activeConversation.value) createConversation();
+      const conv = activeConversation.value;
+
+      // Capture and clear quote attachment
+      const quote = conv.quote;
+      conv.quote = null;
+
+      // Auto-title on first user message
+      if (!conv.messages.length) {
+        conv.title = generateConversationTitle(text);
+      }
+
+      conv.messages.push({
+        role: 'user', content: text,
+        _quote: quote ? quote.text : null,
+        _quotePreview: quote ? quote.preview : null,
+        _quoteExpanded: false,
+      });
       chatInput.value = '';
       chatLoading.value = true;
+
+      // Push an empty streaming assistant message
+      const assistantMsg = reactive({
+        role: 'assistant', content: '', query: null, query_lang: null, is_write: false,
+        _streaming: true,
+      });
+      conv.messages.push(assistantMsg);
+
+      const scrollToBottom = () => {
+        nextTick(() => {
+          const el = document.querySelector('.chat-messages');
+          if (el) el.scrollTop = el.scrollHeight;
+        });
+      };
+
       try {
-        const msgs = chatMessages.value.filter(m => m.role === 'user' || m.role === 'assistant')
-          .map(m => ({ role: m.role, content: m.content }));
-        const r = await API.sendChat(activeConn.value.id, activeDb.value, msgs);
-        chatMessages.value.push({
-          role: 'assistant', content: r.content,
-          query: r.query, query_lang: r.query_lang, is_write: r.is_write,
+        const msgs = conv.messages
+          .filter(m => (m.role === 'user' || m.role === 'assistant') && m.content)
+          .map(m => {
+            let content = m.content;
+            if (m._quote) {
+              content = `[Referenced content]\n\`\`\`\n${m._quote}\n\`\`\`\n\n${content}`;
+            }
+            return { role: m.role, content };
+          });
+        // Remove last (empty assistant) from API messages
+        if (msgs.length && msgs[msgs.length - 1].role === 'assistant' && !msgs[msgs.length - 1].content) {
+          msgs.pop();
+        }
+
+        await API.sendChatStream(activeConn.value.id, activeDb.value, msgs, {
+          onToken(token) {
+            assistantMsg.content += token;
+            scrollToBottom();
+          },
+          onDone(data) {
+            assistantMsg.content = data.content;
+            assistantMsg.query = data.query;
+            assistantMsg.query_lang = data.query_lang;
+            assistantMsg.is_write = data.is_write;
+            assistantMsg._streaming = false;
+          },
+          onError(msg) {
+            assistantMsg.content += `\nError: ${msg}`;
+            assistantMsg._streaming = false;
+          },
         });
       } catch (e) {
-        chatMessages.value.push({ role: 'assistant', content: `Error: ${e.message}` });
+        assistantMsg.content = `Error: ${e.message}`;
+        assistantMsg._streaming = false;
       }
       chatLoading.value = false;
-      await nextTick();
-      const el = document.querySelector('.chat-messages');
-      if (el) el.scrollTop = el.scrollHeight;
+      scrollToBottom();
     }
 
     async function executeChatQuery(msg) {
       if (msg.is_write && !confirm('This is a write operation. Proceed?')) return;
       msg._executing = true;
+      logToConsole(`Chat query: ${msg.query}`, 'info');
       try {
         const r = await API.executeChatQuery(activeConn.value.id, activeDb.value, msg.query);
         msg._result = r;
+        if (r.affected_rows !== undefined) {
+          logToConsole(`OK — ${r.affected_rows} affected rows`, 'success');
+        } else if (r.rows) {
+          logToConsole(`OK — ${r.rowcount} rows returned`, 'success');
+        }
       } catch (e) {
         msg._error = e.message;
+        logToConsole(`Error: ${e.message}`, 'error');
       }
       msg._executing = false;
     }
@@ -448,6 +650,7 @@ const app = createApp({
     onMounted(() => {
       initTheme();
       loadConnections();
+      createConversation();
     });
 
     // When clicking outside autocomplete, close it
@@ -464,15 +667,20 @@ const app = createApp({
       tableStructure, tableIndexes, structureLoading,
       queryText, queryResult, queryLoading, queryError, needsConfirmation,
       chatOpen, chatMessages, chatInput, chatLoading,
+      conversations, activeConversationId,
       autocompleteItems, autocompleteVisible, autocompleteIdx, acPos,
       showConnModal, connForm, connFormError, globalError, isDark,
+      consoleEntries, consoleBody,
+      chatQuote, structureColumns,
       // methods
       loadConnections, openNewConnModal, editConnection, saveConnection, testConn, deleteConn,
       toggleTheme, onTypeChange, toggleConnect, loadDatabases, selectDatabase, selectTable,
       loadTableData, loadStructure, nextPage, prevPage, switchTab,
-      runQuery, confirmQuery, sendChat, executeChatQuery,
+      runQuery, confirmQuery, editInQueryTab, sendChat, executeChatQuery,
       chatKeydown, queryKeydown, onChatInput, onQueryInput, acceptAutocomplete,
       formatValue, renderMarkdown,
+      logToConsole, clearConsole, quoteToChat, dismissQuote,
+      createConversation, switchConversation, deleteConversation,
     };
   },
 });

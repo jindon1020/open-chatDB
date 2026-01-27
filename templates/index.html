@@ -12,7 +12,19 @@
   <div class="sidebar">
     <div class="sidebar-header">
       <div class="logo-area">
-        <div class="logo-icon">DB</div>
+        <div class="logo-icon">
+          <svg viewBox="0 0 32 32" width="20" height="20" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <!-- Database cylinder (larger, fills frame) -->
+            <ellipse cx="13" cy="5" rx="12" ry="4"/>
+            <path d="M1 5v12c0 2.2 5.4 4 12 4s12-1.8 12-4V5"/>
+            <path d="M1 12c0 2.2 5.4 4 12 4s12-1.8 12-4"/>
+            <!-- Chat bubble (separated below cylinder) -->
+            <rect x="21" y="23" width="10" height="7" rx="2"/>
+            <path d="M24 28l-2 3v-3"/>
+            <line x1="24" y1="25.5" x2="28.5" y2="25.5" stroke-width="1.5"/>
+            <line x1="24" y1="28" x2="27" y2="28" stroke-width="1.5"/>
+          </svg>
+        </div>
         <h1>OpenChatDB</h1>
       </div>
       <div class="header-actions">
@@ -136,10 +148,10 @@
           <div class="structure-table">
             <h4>Columns</h4>
             <table class="data-table">
-              <thead><tr><th v-for="col in (tableStructure.length ? Object.keys(tableStructure[0]) : [])">{{ col }}</th></tr></thead>
+              <thead><tr><th v-for="col in structureColumns" :key="col">{{ col }}</th></tr></thead>
               <tbody>
                 <tr v-for="(row, i) in tableStructure" :key="i">
-                  <td v-for="col in Object.keys(row)" :key="col">{{ formatValue(row[col]) }}</td>
+                  <td v-for="col in structureColumns" :key="col">{{ formatValue(row[col]) }}</td>
                 </tr>
               </tbody>
             </table>
@@ -199,6 +211,24 @@
               </template>
             </template>
           </div>
+
+          <!-- Console panel -->
+          <div class="console-panel">
+            <div class="console-header">
+              <span class="console-title">Console</span>
+              <div class="console-actions">
+                <button class="btn btn-sm btn-secondary" @mousedown.prevent="quoteToChat" title="Quote selected text to chat">Quote to Chat</button>
+                <button class="btn btn-sm btn-secondary" @click="clearConsole" title="Clear console">Clear</button>
+              </div>
+            </div>
+            <div class="console-body" ref="consoleBody">
+              <div v-if="!consoleEntries.length" class="console-empty">No log entries yet. Run a query to see output here.</div>
+              <div v-for="(entry, i) in consoleEntries" :key="i" class="console-entry" :class="entry.type">
+                <span class="console-time">{{ entry.time }}</span>
+                <span class="console-text">{{ entry.text }}</span>
+              </div>
+            </div>
+          </div>
         </div>
       </template>
     </div>
@@ -208,7 +238,19 @@
   <div class="chat-panel" :class="{ hidden: !chatOpen }">
     <div class="chat-header">
       <h2>AI Assistant</h2>
-      <button class="close-btn" @click="chatOpen = false">&times;</button>
+      <div class="chat-header-actions">
+        <button class="chat-new-btn" @click="createConversation" title="New conversation">+</button>
+        <button class="close-btn" @click="chatOpen = false">&times;</button>
+      </div>
+    </div>
+
+    <div class="conv-list" v-if="conversations.length > 1 || (conversations.length === 1 && chatMessages.length > 0)">
+      <div v-for="conv in conversations" :key="conv.id"
+           class="conv-item" :class="{ active: activeConversationId === conv.id }"
+           @click="switchConversation(conv.id)">
+        <span class="conv-title">{{ conv.title }}</span>
+        <span class="conv-delete" @click.stop="deleteConversation(conv.id)">&times;</span>
+      </div>
     </div>
 
     <div class="chat-messages">
@@ -216,7 +258,14 @@
         Ask questions about your database.<br>Use @table or #field for references.
       </div>
       <div v-for="(msg, i) in chatMessages" :key="i"
-           class="chat-msg" :class="msg.role">
+           class="chat-msg" :class="[msg.role, { streaming: msg._streaming }]">
+        <!-- Quote reference badge -->
+        <div v-if="msg._quote" class="msg-quote-ref" @click="msg._quoteExpanded = !msg._quoteExpanded">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <span>{{ msg._quotePreview }}</span>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" :style="{ transform: msg._quoteExpanded ? 'rotate(180deg)' : '' }"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <pre v-if="msg._quote && msg._quoteExpanded" class="msg-quote-expanded">{{ msg._quote }}</pre>
         <div v-html="renderMarkdown(msg.content)"></div>
         <!-- Execute button for generated queries -->
         <template v-if="msg.query && msg.role === 'assistant'">
@@ -224,7 +273,7 @@
             <button class="btn btn-sm btn-primary" @click="executeChatQuery(msg)" :disabled="msg._executing">
               {{ msg._executing ? 'Running...' : (msg.is_write ? 'Confirm & Execute' : 'Execute') }}
             </button>
-            <button class="btn btn-sm btn-secondary" @click="queryText = msg.query; activeTab = 'query'">Edit in Query Tab</button>
+            <button class="btn btn-sm btn-secondary" @click="editInQueryTab(msg.query)">Edit in Query Tab</button>
           </div>
           <!-- Inline result -->
           <template v-if="msg._result">
@@ -250,7 +299,14 @@
           <div v-if="msg._error" class="error-msg" style="margin-top:4px">{{ msg._error }}</div>
         </template>
       </div>
-      <div v-if="chatLoading" class="loading" style="padding:12px">Thinking...</div>
+      <div v-if="chatLoading && !chatMessages.some(m => m._streaming)" class="loading" style="padding:12px">Thinking...</div>
+    </div>
+
+    <!-- Quote attachment badge -->
+    <div v-if="chatQuote" class="chat-quote-attach">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      <span>{{ chatQuote.preview }}</span>
+      <button @click="dismissQuote" title="Remove">&times;</button>
     </div>
 
     <div class="chat-input-wrap">
