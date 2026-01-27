@@ -56,7 +56,7 @@ FLASK_SECRET_KEY=your-secret-key
 ### 启动
 
 ```bash
-python app.py
+uvicorn app:asgi_app --host 0.0.0.0 --port 5001
 ```
 
 浏览器访问 `http://localhost:5001`
