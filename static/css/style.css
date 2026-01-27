@@ -150,17 +150,17 @@ html, body {
   width: 30px;
   height: 30px;
   border-radius: var(--radius-sm);
-  background: var(--gradient);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--text-on-accent, #fff);
-  font-weight: 700;
-  font-size: 14px;
   flex-shrink: 0;
+  overflow: hidden;
 }
-.sidebar-header .logo-icon svg {
-  stroke: var(--text-on-accent, #fff);
+.sidebar-header .logo-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
 }
 
 .sidebar-header h1 {
