@@ -174,7 +174,10 @@
       <template v-else-if="activeTab === 'query'">
         <div class="query-editor-wrap">
           <div class="query-editor-area">
-            <textarea v-model="queryText" @input="onQueryInput" @keydown="queryKeydown" placeholder="Enter SQL query..."></textarea>
+            <pre class="sql-highlight" aria-hidden="true" v-html="queryHighlighted"></pre>
+            <textarea v-model="queryText" @input="onQueryInput" @keydown="queryKeydown"
+                      @scroll="$event.target.previousElementSibling.scrollTop = $event.target.scrollTop; $event.target.previousElementSibling.scrollLeft = $event.target.scrollLeft"
+                      placeholder="Enter SQL query..." spellcheck="false"></textarea>
           </div>
           <div class="query-actions">
             <button class="btn btn-primary" @click="runQuery" :disabled="queryLoading || !queryText.trim()">
@@ -235,7 +238,8 @@
   </div>
 
   <!-- ============ CHAT PANEL ============ -->
-  <div class="chat-panel" :class="{ hidden: !chatOpen }">
+  <div class="chat-panel" :class="{ hidden: !chatOpen }" :style="{ width: chatPanelWidth + 'px' }">
+    <div class="chat-resize-handle" @mousedown="onResizeStart"></div>
     <div class="chat-header">
       <h2>AI Assistant</h2>
       <div class="chat-header-actions">
@@ -315,7 +319,7 @@
                 @keydown="chatKeydown"
                 placeholder="Ask about your data... (@table, #field)"
                 :disabled="!activeConn || !activeDb"></textarea>
-      <button class="btn btn-primary" @click="sendChat" :disabled="chatLoading || !chatInput.trim() || !activeDb">Send</button>
+      <button class="btn btn-primary" @click="sendChat" :disabled="chatLoading || (!chatInput.trim() && !chatQuote) || !activeDb">Send</button>
     </div>
   </div>
 

@@ -423,7 +423,7 @@ const app = createApp({
     // ---- Chat ----
     async function sendChat() {
       const text = chatInput.value.trim();
-      if (!text || !activeConn.value || !activeDb.value) return;
+      if (!activeConn.value || !activeDb.value) return;
 
       // Auto-create conversation if none
       if (!activeConversation.value) createConversation();
@@ -433,13 +433,19 @@ const app = createApp({
       const quote = conv.quote;
       conv.quote = null;
 
+      // Require at least text or a quote
+      if (!text && !quote) return;
+
+      // When only a quote is attached with no user text, auto-generate a prompt
+      const displayText = text || 'Please analyze the above error and suggest a fix.';
+
       // Auto-title on first user message
       if (!conv.messages.length) {
-        conv.title = generateConversationTitle(text);
+        conv.title = generateConversationTitle(text || (quote ? quote.preview : 'New Chat'));
       }
 
       conv.messages.push({
-        role: 'user', content: text,
+        role: 'user', content: displayText,
         _quote: quote ? quote.text : null,
         _quotePreview: quote ? quote.preview : null,
         _quoteExpanded: false,
@@ -629,6 +635,113 @@ const app = createApp({
       });
     }
 
+    // ---- SQL syntax highlight ----
+    const SQL_KEYWORDS = new Set([
+      'SELECT','FROM','WHERE','AND','OR','NOT','IN','IS','NULL','AS','ON','JOIN',
+      'LEFT','RIGHT','INNER','OUTER','CROSS','FULL','GROUP','BY','ORDER','HAVING',
+      'LIMIT','OFFSET','UNION','ALL','INSERT','INTO','VALUES','UPDATE','SET',
+      'DELETE','CREATE','TABLE','ALTER','DROP','INDEX','VIEW','DISTINCT','BETWEEN',
+      'LIKE','EXISTS','CASE','WHEN','THEN','ELSE','END','ASC','DESC','COUNT',
+      'SUM','AVG','MIN','MAX','IF','IFNULL','COALESCE','CAST','CONVERT',
+      'PRIMARY','KEY','FOREIGN','REFERENCES','DEFAULT','CONSTRAINT','UNIQUE',
+      'CHECK','AUTO_INCREMENT','ENGINE','CHARSET','COLLATE','DATABASE','USE',
+      'SHOW','DESCRIBE','EXPLAIN','TRUNCATE','REPLACE','GRANT','REVOKE',
+      'BEGIN','COMMIT','ROLLBACK','TRANSACTION','WITH','RECURSIVE','OVER',
+      'PARTITION','ROW_NUMBER','RANK','DENSE_RANK','LAG','LEAD','FIRST_VALUE',
+      'LAST_VALUE','NTILE','FETCH','NEXT','ROWS','ONLY','BOOLEAN','TRUE','FALSE',
+    ]);
+    function highlightSQL(sql) {
+      if (!sql) return '\n';
+      // Tokenize preserving all characters
+      const tokens = [];
+      let i = 0;
+      while (i < sql.length) {
+        // Single-line comment
+        if (sql[i] === '-' && sql[i + 1] === '-') {
+          let j = i + 2;
+          while (j < sql.length && sql[j] !== '\n') j++;
+          tokens.push({ type: 'comment', text: sql.slice(i, j) });
+          i = j;
+          continue;
+        }
+        // Block comment
+        if (sql[i] === '/' && sql[i + 1] === '*') {
+          let j = i + 2;
+          while (j < sql.length - 1 && !(sql[j] === '*' && sql[j + 1] === '/')) j++;
+          j += 2;
+          tokens.push({ type: 'comment', text: sql.slice(i, j) });
+          i = j;
+          continue;
+        }
+        // Strings (single or double quotes)
+        if (sql[i] === "'" || sql[i] === '"') {
+          const q = sql[i];
+          let j = i + 1;
+          while (j < sql.length && sql[j] !== q) { if (sql[j] === '\\') j++; j++; }
+          j++;
+          tokens.push({ type: 'string', text: sql.slice(i, j) });
+          i = j;
+          continue;
+        }
+        // Backtick identifiers
+        if (sql[i] === '`') {
+          let j = i + 1;
+          while (j < sql.length && sql[j] !== '`') j++;
+          j++;
+          tokens.push({ type: 'ident', text: sql.slice(i, j) });
+          i = j;
+          continue;
+        }
+        // Numbers
+        if (/\d/.test(sql[i]) && (i === 0 || /[\s,()=<>!+\-*/]/.test(sql[i - 1]))) {
+          let j = i;
+          while (j < sql.length && /[\d.eE]/.test(sql[j])) j++;
+          tokens.push({ type: 'number', text: sql.slice(i, j) });
+          i = j;
+          continue;
+        }
+        // Words (keywords or identifiers)
+        if (/[a-zA-Z_]/.test(sql[i])) {
+          let j = i;
+          while (j < sql.length && /[a-zA-Z0-9_]/.test(sql[j])) j++;
+          const word = sql.slice(i, j);
+          const type = SQL_KEYWORDS.has(word.toUpperCase()) ? 'keyword' : 'word';
+          tokens.push({ type, text: word });
+          i = j;
+          continue;
+        }
+        // Operators
+        if ('<>=!'.includes(sql[i])) {
+          let j = i + 1;
+          while (j < sql.length && '<>=!'.includes(sql[j])) j++;
+          tokens.push({ type: 'operator', text: sql.slice(i, j) });
+          i = j;
+          continue;
+        }
+        // Everything else (whitespace, punctuation)
+        tokens.push({ type: 'plain', text: sql[i] });
+        i++;
+      }
+      // Build highlighted HTML
+      const esc = t => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      let html = '';
+      for (const tok of tokens) {
+        const t = esc(tok.text);
+        switch (tok.type) {
+          case 'keyword':  html += `<span class="sql-kw">${t}</span>`; break;
+          case 'string':   html += `<span class="sql-str">${t}</span>`; break;
+          case 'number':   html += `<span class="sql-num">${t}</span>`; break;
+          case 'comment':  html += `<span class="sql-cmt">${t}</span>`; break;
+          case 'ident':    html += `<span class="sql-id">${t}</span>`; break;
+          case 'operator': html += `<span class="sql-op">${t}</span>`; break;
+          default:         html += t;
+        }
+      }
+      // Ensure trailing newline so <pre> keeps height in sync
+      return html + '\n';
+    }
+    const queryHighlighted = computed(() => highlightSQL(queryText.value));
+
     // ---- Format helpers ----
     function formatValue(v) {
       if (v === null || v === undefined) return 'NULL';
@@ -644,6 +757,25 @@ const app = createApp({
         .replace(/`([^`]+)`/g, '<code>$1</code>')
         .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
       return html;
+    }
+
+    // ---- Chat panel resize ----
+    const chatPanelWidth = ref(400);
+
+    function onResizeStart(e) {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startW = chatPanelWidth.value;
+      const onMove = (ev) => {
+        const delta = startX - ev.clientX;
+        chatPanelWidth.value = Math.max(280, Math.min(800, startW + delta));
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
     }
 
     // ---- Lifecycle ----
@@ -665,7 +797,7 @@ const app = createApp({
       expandedConns, expandedDbs, activeTab,
       tableData, dataPage, dataLoading,
       tableStructure, tableIndexes, structureLoading,
-      queryText, queryResult, queryLoading, queryError, needsConfirmation,
+      queryText, queryResult, queryLoading, queryError, needsConfirmation, queryHighlighted,
       chatOpen, chatMessages, chatInput, chatLoading,
       conversations, activeConversationId,
       autocompleteItems, autocompleteVisible, autocompleteIdx, acPos,
@@ -681,6 +813,7 @@ const app = createApp({
       formatValue, renderMarkdown,
       logToConsole, clearConsole, quoteToChat, dismissQuote,
       createConversation, switchConversation, deleteConversation,
+      chatPanelWidth, onResizeStart,
     };
   },
 });
