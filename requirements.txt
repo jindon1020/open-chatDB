@@ -1,0 +1,10 @@
+flask>=3.0
+uvicorn>=0.30
+asgiref>=3.7
+python-dotenv>=1.0
+pymysql>=1.1
+cryptography>=42.0
+pymongo>=4.6
+elasticsearch>=8.12
+sshtunnel>=0.4
+requests>=2.31

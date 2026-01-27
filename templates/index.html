@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenChatDB</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+<div id="app">
+  <!-- ============ SIDEBAR ============ -->
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <div class="logo-area">
+        <div class="logo-icon">DB</div>
+        <h1>OpenChatDB</h1>
+      </div>
+      <div class="header-actions">
+        <button class="theme-toggle" @click="toggleTheme" :title="isDark ? 'Switch to Light' : 'Switch to Dark'">
+          {{ isDark ? '\u2600' : '\u263E' }}
+        </button>
+        <button class="icon-btn" @click="openNewConnModal" title="New connection">+</button>
+      </div>
+    </div>
+
+    <div class="tree">
+      <template v-for="conn in connections" :key="conn.id">
+        <!-- Connection node -->
+        <div class="tree-item"
+             :class="{ active: activeConn?.id === conn.id }"
+             @click="toggleConnect(conn)"
+             @dblclick="editConnection(conn)">
+          <span class="conn-status" :class="conn.connected ? 'connected' : 'disconnected'"></span>
+          <span class="icon">{{ conn.type === 'mysql' ? 'M' : conn.type === 'mongodb' ? 'D' : 'E' }}</span>
+          <span style="flex:1;overflow:hidden;text-overflow:ellipsis">{{ conn.name || conn.host }}</span>
+          <span class="delete-btn" @click.stop="deleteConn(conn)">&times;</span>
+        </div>
+
+        <!-- Databases under this connection -->
+        <template v-if="conn.connected && expandedConns[conn.id]">
+          <template v-for="db in databases" :key="conn.id + ':' + db">
+            <div class="tree-item tree-indent"
+                 :class="{ active: activeDb === db && activeConn?.id === conn.id }"
+                 @click="selectDatabase(conn.id, db)">
+              <span class="icon">&#128194;</span>
+              <span>{{ db }}</span>
+            </div>
+            <!-- Tables under this database -->
+            <template v-if="expandedDbs[conn.id + ':' + db] && activeDb === db && activeConn?.id === conn.id">
+              <div v-for="tbl in tables" :key="tbl"
+                   class="tree-item tree-indent-2"
+                   :class="{ active: activeTable === tbl }"
+                   @click="selectTable(tbl)">
+                <span class="icon">&#9638;</span>
+                <span>{{ tbl }}</span>
+              </div>
+            </template>
+          </template>
+        </template>
+      </template>
+
+      <div v-if="!connections.length" class="empty-state" style="padding:30px 16px;font-size:13px;">
+        No connections yet.<br>Click + to add one.
+      </div>
+    </div>
+
+    <div class="sidebar-footer">OpenChatDB v0.1</div>
+  </div>
+
+  <!-- ============ MAIN AREA ============ -->
+  <div class="main">
+    <!-- Toolbar / breadcrumb -->
+    <div class="toolbar">
+      <div class="breadcrumb">
+        <span v-if="activeConn">{{ activeConn.name }}</span>
+        <template v-if="activeDb"> / <span>{{ activeDb }}</span></template>
+        <template v-if="activeTable"> / <span>{{ activeTable }}</span></template>
+      </div>
+      <div style="flex:1"></div>
+      <button class="btn btn-sm btn-secondary" @click="chatOpen = !chatOpen">
+        {{ chatOpen ? 'Hide' : 'Show' }} AI Chat
+      </button>
+    </div>
+
+    <!-- Global error -->
+    <div v-if="globalError" class="error-msg" style="padding:8px 16px;background:var(--bg-surface)">{{ globalError }}</div>
+
+    <!-- Tab bar (when table is selected) -->
+    <div v-if="activeTable" class="tab-bar">
+      <div class="tab" :class="{ active: activeTab === 'data' }" @click="switchTab('data')">Data</div>
+      <div class="tab" :class="{ active: activeTab === 'structure' }" @click="switchTab('structure')">Structure</div>
+      <div class="tab" :class="{ active: activeTab === 'query' }" @click="switchTab('query')">Query</div>
+    </div>
+    <div v-else class="tab-bar">
+      <div class="tab" :class="{ active: activeTab === 'query' }" @click="switchTab('query')">Query</div>
+    </div>
+
+    <!-- Content area -->
+    <div class="content">
+      <!-- Empty state -->
+      <div v-if="!activeConn" class="empty-state">
+        <p style="font-size:18px;margin-bottom:8px">Welcome to OpenChatDB</p>
+        <p>Connect to a database to get started.</p>
+      </div>
+
+      <!-- DATA TAB -->
+      <template v-else-if="activeTab === 'data' && activeTable">
+        <div v-if="dataLoading" class="loading">Loading data...</div>
+        <template v-else-if="tableData">
+          <div class="data-table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th v-for="col in (tableData.rows.length ? Object.keys(tableData.rows[0]) : [])" :key="col">{{ col }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(row, i) in tableData.rows" :key="i">
+                  <td v-for="col in Object.keys(row)" :key="col" :title="formatValue(row[col])">{{ formatValue(row[col]) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="pagination">
+            <button @click="prevPage" :disabled="dataPage <= 1">Prev</button>
+            <span>Page {{ tableData.page }} ({{ tableData.rows.length }} / {{ tableData.total }} rows)</span>
+            <button @click="nextPage" :disabled="tableData.rows.length < tableData.page_size">Next</button>
+          </div>
+        </template>
+      </template>
+
+      <!-- STRUCTURE TAB -->
+      <template v-else-if="activeTab === 'structure' && activeTable">
+        <div v-if="structureLoading" class="loading">Loading structure...</div>
+        <template v-else>
+          <div class="structure-table">
+            <h4>Columns</h4>
+            <table class="data-table">
+              <thead><tr><th v-for="col in (tableStructure.length ? Object.keys(tableStructure[0]) : [])">{{ col }}</th></tr></thead>
+              <tbody>
+                <tr v-for="(row, i) in tableStructure" :key="i">
+                  <td v-for="col in Object.keys(row)" :key="col">{{ formatValue(row[col]) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div v-if="tableIndexes.length" class="structure-table">
+            <h4>Indexes</h4>
+            <table class="data-table">
+              <thead><tr><th v-for="col in Object.keys(tableIndexes[0])">{{ col }}</th></tr></thead>
+              <tbody>
+                <tr v-for="(row, i) in tableIndexes" :key="i">
+                  <td v-for="col in Object.keys(row)" :key="col">{{ formatValue(row[col]) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </template>
+      </template>
+
+      <!-- QUERY TAB -->
+      <template v-else-if="activeTab === 'query'">
+        <div class="query-editor-wrap">
+          <div class="query-editor-area">
+            <textarea v-model="queryText" @input="onQueryInput" @keydown="queryKeydown" placeholder="Enter SQL query..."></textarea>
+          </div>
+          <div class="query-actions">
+            <button class="btn btn-primary" @click="runQuery" :disabled="queryLoading || !queryText.trim()">
+              {{ queryLoading ? 'Running...' : 'Run Query' }}
+            </button>
+            <span v-if="queryError && !needsConfirmation" class="error-msg">{{ queryError }}</span>
+          </div>
+          <!-- Write confirmation -->
+          <div v-if="needsConfirmation" class="confirm-bar">
+            <span>Write operation detected. Confirm execution?</span>
+            <button class="btn btn-sm btn-danger" @click="confirmQuery">Confirm & Execute</button>
+            <button class="btn btn-sm btn-secondary" @click="needsConfirmation = false">Cancel</button>
+          </div>
+          <!-- Query result -->
+          <div class="query-result">
+            <template v-if="queryResult">
+              <div v-if="queryResult.affected_rows !== undefined" style="padding:10px 0;font-size:13px;">
+                Affected rows: {{ queryResult.affected_rows }}
+              </div>
+              <template v-else-if="queryResult.rows">
+                <div class="data-table-wrap">
+                  <table class="data-table">
+                    <thead>
+                      <tr><th v-for="col in queryResult.columns" :key="col">{{ col }}</th></tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="(row, i) in queryResult.rows" :key="i">
+                        <td v-for="col in queryResult.columns" :key="col" :title="formatValue(row[col])">{{ formatValue(row[col]) }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div style="padding:8px 0;font-size:12px;color:var(--text-dim)">{{ queryResult.rowcount }} rows</div>
+              </template>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- ============ CHAT PANEL ============ -->
+  <div class="chat-panel" :class="{ hidden: !chatOpen }">
+    <div class="chat-header">
+      <h2>AI Assistant</h2>
+      <button class="close-btn" @click="chatOpen = false">&times;</button>
+    </div>
+
+    <div class="chat-messages">
+      <div v-if="!chatMessages.length" class="empty-state" style="padding:30px 0;font-size:13px;">
+        Ask questions about your database.<br>Use @table or #field for references.
+      </div>
+      <div v-for="(msg, i) in chatMessages" :key="i"
+           class="chat-msg" :class="msg.role">
+        <div v-html="renderMarkdown(msg.content)"></div>
+        <!-- Execute button for generated queries -->
+        <template v-if="msg.query && msg.role === 'assistant'">
+          <div class="query-actions">
+            <button class="btn btn-sm btn-primary" @click="executeChatQuery(msg)" :disabled="msg._executing">
+              {{ msg._executing ? 'Running...' : (msg.is_write ? 'Confirm & Execute' : 'Execute') }}
+            </button>
+            <button class="btn btn-sm btn-secondary" @click="queryText = msg.query; activeTab = 'query'">Edit in Query Tab</button>
+          </div>
+          <!-- Inline result -->
+          <template v-if="msg._result">
+            <div v-if="msg._result.affected_rows !== undefined" style="margin-top:6px;font-size:12px;color:var(--green)">
+              Affected rows: {{ msg._result.affected_rows }}
+            </div>
+            <div v-else-if="msg._result.rows" style="margin-top:6px;max-height:200px;overflow:auto;">
+              <table class="data-table" style="font-size:11px;">
+                <thead>
+                  <tr><th v-for="col in msg._result.columns" :key="col">{{ col }}</th></tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, ri) in msg._result.rows.slice(0, 20)" :key="ri">
+                    <td v-for="col in msg._result.columns" :key="col">{{ formatValue(row[col]) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <div v-if="msg._result.rowcount > 20" style="font-size:11px;color:var(--text-dim);padding:4px 0;">
+                Showing 20 of {{ msg._result.rowcount }} rows
+              </div>
+            </div>
+          </template>
+          <div v-if="msg._error" class="error-msg" style="margin-top:4px">{{ msg._error }}</div>
+        </template>
+      </div>
+      <div v-if="chatLoading" class="loading" style="padding:12px">Thinking...</div>
+    </div>
+
+    <div class="chat-input-wrap">
+      <textarea :value="chatInput"
+                @input="onChatInput"
+                @keydown="chatKeydown"
+                placeholder="Ask about your data... (@table, #field)"
+                :disabled="!activeConn || !activeDb"></textarea>
+      <button class="btn btn-primary" @click="sendChat" :disabled="chatLoading || !chatInput.trim() || !activeDb">Send</button>
+    </div>
+  </div>
+
+  <!-- ============ AUTOCOMPLETE DROPDOWN ============ -->
+  <div v-if="autocompleteVisible" class="autocomplete"
+       :style="{ top: acPos.top + 'px', left: acPos.left + 'px' }">
+    <div v-for="(item, i) in autocompleteItems" :key="i"
+         class="autocomplete-item" :class="{ selected: i === autocompleteIdx }"
+         :ref="el => { if (i === autocompleteIdx && el) el.scrollIntoView({ block: 'nearest' }) }"
+         @mousedown.prevent="autocompleteIdx = i; acceptAutocomplete()">
+      <span class="badge" :class="item.type">{{ item.type === 'table' ? 'T' : 'F' }}</span>
+      <span class="ac-name">{{ item.display }}</span>
+      <span v-if="item.type === 'field' && item.table" class="ac-table-hint">{{ item.table }}</span>
+    </div>
+  </div>
+
+  <!-- ============ CONNECTION MODAL ============ -->
+  <div v-if="showConnModal" class="modal-overlay" @click.self="showConnModal = false">
+    <div class="modal">
+      <h3>{{ connForm.id ? 'Edit' : 'New' }} Connection</h3>
+
+      <div class="form-group">
+        <label>Name</label>
+        <input v-model="connForm.name" placeholder="My Database">
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>Type</label>
+          <select v-model="connForm.type" @change="onTypeChange">
+            <option value="mysql">MySQL</option>
+            <option value="mongodb">MongoDB</option>
+            <option value="elasticsearch">Elasticsearch</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Port</label>
+          <input v-model="connForm.port" type="number">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Host</label>
+        <input v-model="connForm.host" placeholder="127.0.0.1">
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>User</label>
+          <input v-model="connForm.user" placeholder="root">
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <input v-model="connForm.password" type="password">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Database</label>
+        <input v-model="connForm.database" placeholder="(optional)">
+      </div>
+
+      <div v-if="connForm.type === 'mongodb'" class="form-group">
+        <label>URI (overrides host/port/user/password if set)</label>
+        <input v-model="connForm.uri" placeholder="mongodb://...">
+      </div>
+
+      <!-- SSH section -->
+      <div class="ssh-section">
+        <label class="ssh-toggle">
+          <input type="checkbox" v-model="connForm.ssh_enabled"> SSH Tunnel
+        </label>
+        <template v-if="connForm.ssh_enabled">
+          <div class="form-row">
+            <div class="form-group">
+              <label>SSH Host</label>
+              <input v-model="connForm.ssh_host" placeholder="ssh.example.com">
+            </div>
+            <div class="form-group">
+              <label>SSH Port</label>
+              <input v-model="connForm.ssh_port" type="number">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>SSH Username</label>
+              <input v-model="connForm.ssh_username">
+            </div>
+            <div class="form-group">
+              <label>SSH Password</label>
+              <input v-model="connForm.ssh_password" type="password">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>SSH Key File (path)</label>
+            <input v-model="connForm.ssh_key_file" placeholder="/path/to/id_rsa">
+          </div>
+        </template>
+      </div>
+
+      <div v-if="connFormError" class="error-msg">{{ connFormError }}</div>
+
+      <div class="modal-actions">
+        <button class="btn btn-secondary" @click="testConn">Test</button>
+        <button class="btn btn-secondary" @click="showConnModal = false">Cancel</button>
+        <button class="btn btn-primary" @click="saveConnection">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<script src="/static/js/api.js"></script>
+<script src="/static/js/app.js"></script>
+</body>
+</html>
