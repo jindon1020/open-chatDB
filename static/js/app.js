@@ -445,9 +445,12 @@ const app = createApp({
     }
 
     // ---- Lifecycle ----
-    onMounted(() => {
+    onMounted(async () => {
       initTheme();
-      loadConnections();
+      await loadConnections();
+      if (connections.value.length === 0) {
+        openNewConnModal();
+      }
     });
 
     // When clicking outside autocomplete, close it
