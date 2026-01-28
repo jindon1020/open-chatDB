@@ -56,6 +56,13 @@ a = Analysis(
         'routes.api_schema',
         'routes.api_chat',
         'routes.api_settings',
+        # pywebview (native window)
+        'webview',
+        'webview.platforms',
+        'webview.platforms.cocoa',
+        'webview.platforms.edgechromium',
+        'webview.platforms.gtk',
+        'webview.platforms.winforms',
         # stdlib / misc
         'dotenv',
     ],
