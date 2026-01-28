@@ -36,11 +36,29 @@ jobs:
       - name: Build with PyInstaller
         run: pyinstaller openchatdb.spec
 
-      - name: Package (macOS)
+      - name: Create DMG (macOS)
         if: runner.os == 'macOS'
         run: |
-          cd dist
-          zip -r ../${{ matrix.artifact }}.zip OpenChatDB.app
+          brew install create-dmg
+          create-dmg \
+            --volname "OpenChatDB" \
+            --volicon "static/resource/logo_dark_mode.png" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --icon "OpenChatDB.app" 150 185 \
+            --app-drop-link 450 185 \
+            --no-internet-enable \
+            "${{ matrix.artifact }}.dmg" \
+            "dist/OpenChatDB.app" \
+          || true
+          # Fallback: if create-dmg fails (e.g. no icon file), use hdiutil
+          if [ ! -f "${{ matrix.artifact }}.dmg" ]; then
+            hdiutil create -volname "OpenChatDB" \
+              -srcfolder dist/OpenChatDB.app \
+              -ov -format UDZO \
+              "${{ matrix.artifact }}.dmg"
+          fi
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
@@ -48,7 +66,15 @@ jobs:
         run: |
           Compress-Archive -Path dist\OpenChatDB.exe -DestinationPath ${{ matrix.artifact }}.zip
 
-      - name: Upload artifact
+      - name: Upload artifact (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.dmg
+
+      - name: Upload artifact (Windows)
+        if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
@@ -66,5 +92,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/**/*.zip
+          files: |
+            artifacts/**/*.dmg
+            artifacts/**/*.zip
           generate_release_notes: true
