@@ -1169,6 +1169,37 @@ html, body {
 .console-entry.error .console-text { color: var(--red); }
 .console-entry.warn .console-text { color: var(--yellow); }
 
+/* ============ Settings ============ */
+.settings-btn {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+}
+.settings-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+  color: var(--text-bright);
+}
+
+.settings-notice {
+  background: var(--accent-dim);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 16px;
+}
+
 /* ============ Selection ============ */
 ::selection {
   background: var(--accent);

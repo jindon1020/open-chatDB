@@ -85,6 +85,15 @@ const app = createApp({
     });
     const connFormError = ref('');
 
+    // Settings modal
+    const showSettingsModal = ref(false);
+    const settingsForm = reactive({
+      api_key: '', base_url: '', model: '', max_tokens: 4096, temperature: 0,
+    });
+    const settingsLoaded = ref(false);
+    const settingsError = ref('');
+    const settingsNeedsSetup = ref(false);
+
     // General error
     const globalError = ref('');
 
@@ -759,6 +768,42 @@ const app = createApp({
       return html;
     }
 
+    // ---- Settings ----
+    async function loadSettings() {
+      try {
+        const s = await API.getSettings();
+        Object.assign(settingsForm, s);
+        settingsLoaded.value = true;
+        // If api_key is empty, user needs to configure it
+        settingsNeedsSetup.value = !s.api_key;
+      } catch (e) {
+        settingsError.value = e.message;
+      }
+    }
+
+    function openSettingsModal() {
+      settingsError.value = '';
+      showSettingsModal.value = true;
+    }
+
+    async function saveSettings() {
+      settingsError.value = '';
+      try {
+        const result = await API.updateSettings({
+          api_key: settingsForm.api_key,
+          base_url: settingsForm.base_url,
+          model: settingsForm.model,
+          max_tokens: settingsForm.max_tokens,
+          temperature: settingsForm.temperature,
+        });
+        Object.assign(settingsForm, result);
+        settingsNeedsSetup.value = !result.api_key;
+        showSettingsModal.value = false;
+      } catch (e) {
+        settingsError.value = e.message;
+      }
+    }
+
     // ---- Chat panel resize ----
     const chatPanelWidth = ref(400);
 
@@ -779,10 +824,14 @@ const app = createApp({
     }
 
     // ---- Lifecycle ----
-    onMounted(() => {
+    onMounted(async () => {
       initTheme();
       loadConnections();
       createConversation();
+      await loadSettings();
+      if (settingsNeedsSetup.value) {
+        openSettingsModal();
+      }
     });
 
     // When clicking outside autocomplete, close it
@@ -802,6 +851,7 @@ const app = createApp({
       conversations, activeConversationId,
       autocompleteItems, autocompleteVisible, autocompleteIdx, acPos,
       showConnModal, connForm, connFormError, globalError, isDark,
+      showSettingsModal, settingsForm, settingsLoaded, settingsError, settingsNeedsSetup,
       consoleEntries, consoleBody,
       chatQuote, structureColumns,
       // methods
@@ -814,6 +864,7 @@ const app = createApp({
       logToConsole, clearConsole, quoteToChat, dismissQuote,
       createConversation, switchConversation, deleteConversation,
       chatPanelWidth, onResizeStart,
+      loadSettings, openSettingsModal, saveSettings,
     };
   },
 });

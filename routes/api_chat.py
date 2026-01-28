@@ -1,7 +1,7 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, Response
 from services.connection_manager import manager
 from services.schema_indexer import indexer
-from services.llm_service import chat, resolve_references
+from services.llm_service import chat, chat_stream, resolve_references
 from services import mysql_service, mongo_service, elasticsearch_service
 import json
 import datetime
@@ -52,6 +52,36 @@ def send_message():
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@chat_bp.route("/send/stream", methods=["POST"])
+def send_message_stream():
+    data = request.get_json()
+    conn_id = data.get("conn_id")
+    database = data.get("database")
+    messages = data.get("messages", [])
+
+    if not conn_id or not database or not messages:
+        return jsonify({"error": "conn_id, database, and messages are required"}), 400
+
+    db_type = manager.get_db_type(conn_id)
+    schemas = indexer.get_schemas(conn_id, database)
+
+    # Resolve @/# references in the latest user message
+    if messages and messages[-1]["role"] == "user":
+        messages[-1]["content"] = resolve_references(messages[-1]["content"], schemas)
+
+    schema_text = indexer.build_schema_text(conn_id, database)
+
+    def generate():
+        try:
+            yield from chat_stream(messages, schema_text, db_type)
+        except Exception as e:
+            import json as _json
+            yield f"data: {_json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+
+    return Response(generate(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @chat_bp.route("/execute", methods=["POST"])

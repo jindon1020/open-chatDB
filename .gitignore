@@ -5,3 +5,6 @@ venv/
 .idea/
 .claude/
 data/connections.json
+data/settings.json
+dist/
+build/

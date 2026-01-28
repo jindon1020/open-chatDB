@@ -79,10 +79,56 @@ const API = {
       body: JSON.stringify({ conn_id: connId, database, messages }),
     });
   },
+  /**
+   * Streaming chat via SSE.
+   * callbacks: { onToken(text), onDone(data), onError(msg) }
+   */
+  async sendChatStream(connId, database, messages, callbacks) {
+    const resp = await fetch('/api/chat/send/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conn_id: connId, database, messages }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${resp.status}`);
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // keep incomplete line in buffer
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const payload = JSON.parse(line.slice(6));
+          if (payload.type === 'token' && callbacks.onToken) {
+            callbacks.onToken(payload.content);
+          } else if (payload.type === 'done' && callbacks.onDone) {
+            callbacks.onDone(payload);
+          } else if (payload.type === 'error' && callbacks.onError) {
+            callbacks.onError(payload.content);
+          }
+        } catch { /* ignore parse errors */ }
+      }
+    }
+  },
   executeChatQuery(connId, database, query) {
     return this._fetch('/api/chat/execute', {
       method: 'POST',
       body: JSON.stringify({ conn_id: connId, database, query }),
     });
+  },
+
+  // --- Settings ---
+  getSettings() {
+    return this._fetch('/api/settings');
+  },
+  updateSettings(data) {
+    return this._fetch('/api/settings', { method: 'PUT', body: JSON.stringify(data) });
   },
 };
