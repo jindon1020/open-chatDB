@@ -41,10 +41,14 @@ def _apply_to_config(data: dict):
         if json_key not in data:
             continue
         val = data[json_key]
+        if isinstance(val, str):
+            val = val.strip()
         if attr == "LLM_MAX_TOKENS":
             val = int(val)
         elif attr == "LLM_TEMPERATURE":
             val = float(val)
+        elif attr == "LLM_BASE_URL" and isinstance(val, str):
+            val = val.rstrip("/")
         setattr(Config, attr, val)
 
 
@@ -82,8 +86,11 @@ def update_settings(data: dict) -> dict:
             if json_key not in data:
                 continue
             value = data[json_key]
+            # Trim whitespace from all string values
+            if isinstance(value, str):
+                value = value.strip()
             # Empty api_key → preserve current
-            if json_key == "api_key" and (value is None or str(value).strip() == ""):
+            if json_key == "api_key" and (value is None or value == ""):
                 continue
             if json_key == "max_tokens":
                 value = int(value)

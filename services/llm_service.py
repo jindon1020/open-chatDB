@@ -101,8 +101,8 @@ def is_write_operation(query: str, db_type: str = "mysql") -> bool:
 
 
 def _api_url(path: str) -> str:
-    """Build full API URL, stripping duplicate slashes."""
-    base = Config.LLM_BASE_URL.rstrip("/")
+    """Build full API URL, stripping whitespace and duplicate slashes."""
+    base = Config.LLM_BASE_URL.strip().rstrip("/")
     return f"{base}{path}"
 
 
