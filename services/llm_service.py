@@ -100,6 +100,12 @@ def is_write_operation(query: str, db_type: str = "mysql") -> bool:
     return False
 
 
+def _api_url(path: str) -> str:
+    """Build full API URL, stripping duplicate slashes."""
+    base = Config.LLM_BASE_URL.rstrip("/")
+    return f"{base}{path}"
+
+
 def chat(messages: list[dict], schema_text: str, db_type: str) -> dict:
     """Call LLM API (OpenAI-compatible) and return assistant response."""
     system_msg = SYSTEM_PROMPT_TEMPLATE.format(schema=schema_text, db_type=db_type)
@@ -117,7 +123,7 @@ def chat(messages: list[dict], schema_text: str, db_type: str) -> dict:
     }
 
     resp = requests.post(
-        f"{Config.LLM_BASE_URL}/chat/completions",
+        _api_url("/chat/completions"),
         headers=headers,
         json=payload,
         timeout=60,
@@ -169,7 +175,7 @@ def chat_stream(messages: list[dict], schema_text: str, db_type: str):
 
     try:
         resp = requests.post(
-            f"{Config.LLM_BASE_URL}/chat/completions",
+            _api_url("/chat/completions"),
             headers=headers,
             json=payload,
             timeout=120,

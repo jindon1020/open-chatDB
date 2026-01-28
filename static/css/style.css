@@ -627,6 +627,11 @@ html, body {
 .chat-messages::-webkit-scrollbar { width: 4px; }
 .chat-messages::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
 
+.chat-messages {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 .chat-msg {
   margin-bottom: 14px;
   padding: 12px 14px;
@@ -637,6 +642,9 @@ html, body {
   white-space: pre-wrap;
   word-break: break-word;
   transition: background var(--transition-base);
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
 }
 .chat-msg.user {
   background: var(--gradient);

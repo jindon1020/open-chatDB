@@ -89,6 +89,8 @@ def update_settings(data: dict) -> dict:
                 value = int(value)
             elif json_key == "temperature":
                 value = float(value)
+            elif json_key == "base_url" and isinstance(value, str):
+                value = value.rstrip("/")
             current[json_key] = value
 
         _write_file(current)
